@@ -1,4 +1,3 @@
-```typescript
 import { config } from "./config.js";
 
 export interface ReplyRequest {
@@ -12,6 +11,8 @@ export interface ReplyRequest {
 export interface ReplyResponse {
   reply: string | null;
   shouldReply: boolean;
+  reason?: string;
+  delayMs?: number;
 }
 
 export async function requestAIReply(
@@ -41,4 +42,3 @@ export async function requestAIReply(
 
   return (await response.json()) as ReplyResponse;
 }
-```
