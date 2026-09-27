@@ -1,0 +1,15 @@
+```json
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+
+  "name": "telegram-personal-ai-worker",
+
+  "main": "src/index.ts",
+
+  "compatibility_date": "2026-09-25",
+
+  "observability": {
+    "enabled": true
+  }
+}
+```
