@@ -1,5 +1,4 @@
-```typescript
-import type { Env, ReplyRequest } from "./types.js";
+import type { Env, ReplyRequest, StoredMessage } from "./types.js";
 
 const DEFAULT_PRIMARY_MODEL = "qwen3.8-27b-unsencored";
 
@@ -16,10 +15,7 @@ Personality:
 - Do not make every response long.
 - Match the tone and energy of the conversation.
 - Slang and emojis are allowed when they fit naturally.
-- You may use light teasing, flirting, or sensual tone when appropriate.
-- Never generate sexually explicit content.
 - Do not sound like a corporate chatbot.
-- Do not mention that you are an AI unless the conversation requires it.
 
 Important:
 - Respond only to the current conversation context.
@@ -31,8 +27,9 @@ Important:
 async function callJerouter(
   env: Env,
   model: string,
+  history: StoredMessage[],
   request: ReplyRequest
-): Promise<string> {
+): Promise<{ content: string; model: string }> {
   const response = await fetch(
     "https://je.jerouter.web.id/v1/chat/completions",
     {
@@ -51,6 +48,13 @@ async function callJerouter(
             role: "system",
             content: getSystemPrompt()
           },
+
+          // Conversation memory: recent turns from Supabase.
+          ...history.map((entry) => ({
+            role: entry.role,
+            content: entry.content
+          })),
+
           {
             role: "user",
             content: request.message
@@ -85,22 +89,19 @@ async function callJerouter(
     throw new Error("Jerouter returned an empty response.");
   }
 
-  return content.trim();
+  return { content: content.trim(), model };
 }
 
 export async function generateReply(
   env: Env,
-  request: ReplyRequest
-): Promise<string> {
-  const primaryModel =
-    env.PRIMARY_MODEL || DEFAULT_PRIMARY_MODEL;
+  request: ReplyRequest,
+  history: StoredMessage[]
+): Promise<{ reply: string; modelUsed: string }> {
+  const primaryModel = env.PRIMARY_MODEL || DEFAULT_PRIMARY_MODEL;
 
   try {
-    return await callJerouter(
-      env,
-      primaryModel,
-      request
-    );
+    const result = await callJerouter(env, primaryModel, history, request);
+    return { reply: result.content, modelUsed: result.model };
   } catch (primaryError) {
     console.error("Primary model failed:", primaryError);
 
@@ -108,15 +109,14 @@ export async function generateReply(
       throw primaryError;
     }
 
-    console.log(
-      `Trying fallback model: ${env.FALLBACK_MODEL}`
-    );
+    console.log(`Trying fallback model: ${env.FALLBACK_MODEL}`);
 
-    return await callJerouter(
+    const result = await callJerouter(
       env,
       env.FALLBACK_MODEL,
+      history,
       request
     );
+    return { reply: result.content, modelUsed: result.model };
   }
 }
-```
