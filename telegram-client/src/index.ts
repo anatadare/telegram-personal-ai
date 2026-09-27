@@ -1,5 +1,26 @@
-```typescript
+import { Api } from "telegram";
+
 import { createTelegramClient, registerMessageHandler } from "./telegram.js";
+import { requestAIReply } from "./ai-client.js";
+
+type ChatType = "private" | "group" | "supergroup" | "channel" | "unknown";
+
+function resolveChatType(chat: any): ChatType {
+  if (!chat) return "unknown";
+
+  if (chat instanceof Api.User) return "private";
+  if (chat instanceof Api.Chat) return "group";
+
+  if (chat instanceof Api.Channel) {
+    return chat.megagroup ? "supergroup" : "channel";
+  }
+
+  return "unknown";
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 async function main(): Promise<void> {
   console.log("======================================");
@@ -34,6 +55,11 @@ async function main(): Promise<void> {
       return;
     }
 
+    // Never react to messages the account itself sent (avoid reply loops).
+    if (message.out) {
+      return;
+    }
+
     const text = message.message;
 
     if (!text || !text.trim()) {
@@ -42,26 +68,68 @@ async function main(): Promise<void> {
 
     const chat = await event.getChat();
     const sender = await event.getSender();
+    const chatType = resolveChatType(chat);
+    const chatId = message.chatId?.toString();
+
+    if (!chatId) {
+      return;
+    }
+
+    // Broadcast channels aren't conversational; skip them entirely.
+    if (chatType === "channel") {
+      return;
+    }
+
+    const senderId =
+      sender && "id" in sender ? sender.id?.toString() ?? null : null;
 
     console.log("--------------------------------------");
     console.log("New Telegram message");
-    console.log(`Chat ID: ${message.chatId?.toString() ?? "unknown"}`);
+    console.log(`Chat ID: ${chatId}`);
+    console.log(`Chat type: ${chatType}`);
     console.log(`Message ID: ${message.id}`);
     console.log(`Text: ${text}`);
-
-    if (sender && "id" in sender) {
-      console.log(`Sender ID: ${sender.id?.toString() ?? "unknown"}`);
-    }
-
-    if (chat && "title" in chat && chat.title) {
-      console.log(`Chat title: ${chat.title}`);
-    }
-
+    console.log(`Sender ID: ${senderId ?? "unknown"}`);
     console.log("--------------------------------------\n");
 
-    // AI reply intentionally disabled for now.
-    // We will add filtering, cooldown, configuration,
-    // memory and Worker communication in the next stage.
+    try {
+      const response = await requestAIReply({
+        chatId,
+        senderId,
+        chatType,
+        message: text,
+        messageId: message.id ?? null
+      });
+
+      if (!response.shouldReply || !response.reply) {
+        if (response.reason) {
+          console.log(`No reply sent (${response.reason}) for chat ${chatId}.`);
+        }
+        return;
+      }
+
+      // Natural delay so replies don't feel instant/robotic.
+      const delayMs = response.delayMs ?? 1500;
+      await sleep(delayMs);
+
+      // Show "typing..." briefly before sending, if the chat supports it.
+      try {
+        await client.invoke(
+          new Api.messages.SetTyping({
+            peer: chat,
+            action: new Api.SendMessageTypingAction()
+          })
+        );
+      } catch {
+        // Non-critical; ignore if typing indicator fails.
+      }
+
+      await client.sendMessage(chat, { message: response.reply });
+
+      console.log(`Replied in chat ${chatId}: ${response.reply}\n`);
+    } catch (error) {
+      console.error(`Failed to get/send AI reply for chat ${chatId}:`, error);
+    }
   });
 
   await new Promise<void>(() => {
@@ -74,4 +142,3 @@ main().catch((error) => {
   console.error(error);
   process.exit(1);
 });
-```
